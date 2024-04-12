@@ -1,95 +1,94 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"time"
 )
 
+func problemPuller(fileName string) ([]problem, error) {
+	if fObj, err := os.Open(fileName); err == nil {
+		csvR := csv.NewReader(fObj)
+		if cLines, err := csvR.ReadAll(); err == nil {
+			return problemParser(cLines), nil
+		} else {
+			return nil, fmt.Errorf("Error in reading data in CSV"+"format from %s file; %s", fileName, err.Error())
+		}
+	} else {
+		return nil, fmt.Errorf("Error in opening the %s file; %s", fileName, err.Error())
+	}
+}
+
 func main() {
-	//1. input the name of the file
-	fName := flag.String("f", "problems.csv", "path of the csv file")
-	//2. skapa en timer
-	timer := flag.Int("t", 30, "timer of quizz")
+	fName := flag.String("f", "quiz.csv", "path of csv file")
+	timer := flag.Int("t", 30, "timer of quiz")
 	flag.Parse()
-	//3. Hämta frågor från CSV fil
-	problems, err := grabQuestions(*fName)
-	//4. felhantering
+
+	problems, err := problemPuller(*fName)
+
 	if err != nil {
-		closeApp(fmt.Sprintf("Something went wrong: %s", err.Error()))
+		exit(fmt.Sprintf("something went wrong: %s", err.Error()))
 	}
 
-	correctAns := 0
-	//6. initialisera timer
+	var wg sync.WaitGroup
+	var correctAns int
 	tObj := time.NewTimer(time.Duration(*timer) * time.Second)
 	ansC := make(chan string)
-	//7. loopa igenom frågorna och skriv ut dem. spara svar.
 
 	for i, p := range problems {
 		var answer string
+		wg.Add(1)
+
 		fmt.Printf("Question %d: %s\n", i+1, p.q)
 
 		go func() {
-			fmt.Scanf("%s", &answer)
+			defer wg.Done()
+			reader := bufio.NewReader(os.Stdin)
+			line, _ := reader.ReadString('\n')
+			answer = line[:len(line)-1]
 			ansC <- answer
-
 		}()
 
 		select {
 		case <-tObj.C:
-			fmt.Println()
-			break
-
+			fmt.Println("Times up!")
+			close(ansC)
+			return
 		case iAns := <-ansC:
+			iAns = strings.TrimSpace(iAns)
 			if iAns == p.a {
 				correctAns++
 			}
-			if i == len(problems)-1 {
-				close(ansC)
-			}
 		}
 	}
 
-	fmt.Printf("Your result is %d out of %d\n", correctAns, len(problems))
-	fmt.Printf("Press enter to Exit")
-	<-ansC
+	wg.Wait()
+	close(ansC)
 
+	fmt.Printf("\nYour result is: %d out of %d\n", correctAns, len(problems))
+	fmt.Printf("Press enter to exit.")
+	fmt.Scanln()
 }
 
-func grabQuestions(fileName string) ([]problem, error) {
-	if fObj, err := os.Open(fileName); err == nil {
-		csvR := csv.NewReader(fObj)
-		if cLines, err := csvR.ReadAll(); err == nil {
-			return parsQuestions(cLines), nil
-		} else {
-			return nil, fmt.Errorf("Error in reading data in CSV"+"format from %s file; %s", fileName, err.Error())
-		}
-
-	} else {
-		return nil, fmt.Errorf("error in opening %s file; %s", fileName, err.Error())
-	}
-
-}
-
-type problem struct {
-	//. struct som gör att att golang kan läsa CSV fil.
-	q string
-	a string
-}
-
-func parsQuestions(lines [][]string) []problem {
-	// kollar csv text och parse för readability
+func problemParser(lines [][]string) []problem {
 	r := make([]problem, len(lines))
 	for i := 0; i < len(lines); i++ {
 		r[i] = problem{q: lines[i][0], a: lines[i][1]}
 	}
-
 	return r
 }
 
-func closeApp(msg string) {
+type problem struct {
+	q string
+	a string
+}
+
+func exit(msg string) {
 	fmt.Println(msg)
 	os.Exit(1)
 }
